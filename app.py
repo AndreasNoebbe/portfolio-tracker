@@ -144,6 +144,50 @@ def get_current_prices():
     
     return current_prices
 
+def calculate_portfolio_summary(current_prices, exchange_rates):
+    """Calculate your actual P&L and portfolio metrics in DKK"""
+    summary = []
+    total_invested_dkk = 0
+    total_current_dkk = 0
+    
+    for ticker, position in PORTFOLIO.items():
+        current_price = current_prices.get(ticker, 0)
+        
+        # Convert invested amount to DKK
+        invested_value_original = position['shares'] * position['avg_price']
+        invested_value_dkk = convert_to_dkk(invested_value_original, position['currency'], exchange_rates)
+        
+        # Convert current value to DKK  
+        current_value_original = position['shares'] * current_price
+        current_value_dkk = convert_to_dkk(current_value_original, position['currency'], exchange_rates)
+        
+        # Calculate P&L in DKK
+        pnl_dkk = current_value_dkk - invested_value_dkk
+        pnl_percent = (pnl_dkk / invested_value_dkk * 100) if invested_value_dkk > 0 else 0
+        
+        summary.append({
+            'ticker': ticker,
+            'name': position['name'],
+            'shares': position['shares'],
+            'avg_price_original': position['avg_price'],
+            'avg_price_dkk': convert_to_dkk(position['avg_price'], position['currency'], exchange_rates),
+            'current_price_original': current_price,
+            'current_price_dkk': convert_to_dkk(current_price, position['currency'], exchange_rates),
+            'invested_dkk': invested_value_dkk,
+            'current_value_dkk': current_value_dkk,
+            'pnl_dkk': pnl_dkk,
+            'pnl_percent': pnl_percent,
+            'currency': position['currency']
+        })
+        
+        total_invested_dkk += invested_value_dkk
+        total_current_dkk += current_value_dkk
+    
+    total_pnl_dkk = total_current_dkk - total_invested_dkk
+    total_pnl_percent = (total_pnl_dkk / total_invested_dkk * 100) if total_invested_dkk > 0 else 0
+    
+    return summary, total_invested_dkk, total_current_dkk, total_pnl_dkk, total_pnl_percent
+
 @st.cache_data(ttl=600)  # Cache for 10 minutes
 def get_historical_data():
     """Fetch historical data for portfolio analysis with rate limiting"""
@@ -235,6 +279,158 @@ def calculate_portfolio_history(data, exchange_rates):
             portfolio_values.append({'date': date, 'portfolio_value_dkk': daily_value_dkk})
     
     return pd.DataFrame(portfolio_values)
+
+def create_portfolio_pie_chart(summary):
+    """Create a better aligned pie chart of portfolio allocation in DKK"""
+    labels = [f"{row['name']}" for row in summary]
+    values = [row['current_value_dkk'] for row in summary]
+    
+    # Create better colors
+    colors = ['#1f4e79', '#2e7d3a', '#ff6b35', '#6c5ce7', '#fd79a8']
+    
+    fig = go.Figure(data=[go.Pie(
+        labels=labels,
+        values=values,
+        hole=0.4,
+        textinfo='label+percent',
+        textposition='auto',
+        marker=dict(colors=colors, line=dict(color='#FFFFFF', width=2)),
+        hovertemplate='<b>%{label}</b><br>Value: %{value:,.0f} DKK<br>Percentage: %{percent}<extra></extra>'
+    )])
+    
+    fig.update_layout(
+        title={
+            'text': 'Portfolio Allocation (DKK)',
+            'x': 0.5,
+            'font': {'size': 18, 'color': '#2c3e50'}
+        },
+        height=450,
+        paper_bgcolor='white',
+        font={'color': '#2c3e50', 'size': 12},
+        margin=dict(l=20, r=20, t=60, b=20),
+        showlegend=True,
+        legend=dict(
+            orientation="v",
+            yanchor="middle",
+            y=0.5,
+            xanchor="left",
+            x=1.02
+        )
+    )
+    
+    return fig
+
+def create_pnl_bar_chart(summary):
+    """Create a better aligned P&L bar chart in DKK"""
+    tickers = [row['ticker'] for row in summary]
+    pnl_values = [row['pnl_dkk'] for row in summary]
+    colors = ['#28a745' if pnl >= 0 else '#dc3545' for pnl in pnl_values]
+    
+    fig = go.Figure(data=[go.Bar(
+        x=tickers,
+        y=pnl_values,
+        marker_color=colors,
+        text=[f"{pnl:+,.0f} DKK" for pnl in pnl_values],
+        textposition='outside',  # Place text outside bars
+        textfont=dict(size=12, color='#2c3e50'),
+        hovertemplate='<b>%{x}</b><br>P&L: %{y:+,.0f} DKK<extra></extra>'
+    )])
+    
+    fig.update_layout(
+        title={
+            'text': 'Profit & Loss by Position (DKK)',
+            'x': 0.5,
+            'font': {'size': 18, 'color': '#2c3e50'}
+        },
+        xaxis_title='Holdings',
+        yaxis_title='P&L (DKK)',
+        height=450,
+        paper_bgcolor='white',
+        plot_bgcolor='white',
+        font={'color': '#2c3e50'},
+        margin=dict(l=60, r=60, t=80, b=60),  # Increased margins for text
+        xaxis=dict(
+            tickfont=dict(size=12),
+            gridcolor='#f0f0f0'
+        ),
+        yaxis=dict(
+            tickfont=dict(size=12),
+            gridcolor='#f0f0f0',
+            zeroline=True,
+            zerolinecolor='#999999',
+            zerolinewidth=1
+        )
+    )
+    
+    return fig
+
+def create_historical_performance_chart(portfolio_history, total_invested_dkk):
+    """Create a chart showing portfolio performance over time in DKK"""
+    if portfolio_history.empty:
+        return go.Figure()
+    
+    fig = go.Figure()
+    
+    # Portfolio value line
+    fig.add_trace(go.Scatter(
+        x=portfolio_history['date'],
+        y=portfolio_history['portfolio_value_dkk'],
+        mode='lines',
+        name='Portfolio Value',
+        line=dict(color='#1f4e79', width=3),
+        fill='tonexty',
+        hovertemplate='Date: %{x}<br>Value: %{y:,.0f} DKK<extra></extra>'
+    ))
+    
+    # Invested amount line
+    fig.add_hline(
+        y=total_invested_dkk, 
+        line_dash="dash", 
+        line_color="#dc3545", 
+        line_width=2,
+        annotation_text=f"Total Invested: {total_invested_dkk:,.0f} DKK",
+        annotation_position="top right"
+    )
+    
+    # Fill area for gains/losses
+    is_profit = portfolio_history['portfolio_value_dkk'].iloc[-1] > total_invested_dkk
+    fill_color = 'rgba(40, 167, 69, 0.2)' if is_profit else 'rgba(220, 53, 69, 0.2)'
+    
+    fig.add_trace(go.Scatter(
+        x=portfolio_history['date'],
+        y=[total_invested_dkk] * len(portfolio_history),
+        mode='lines',
+        line=dict(color='rgba(0,0,0,0)'),
+        showlegend=False,
+        hoverinfo='skip'
+    ))
+    
+    fig.update_layout(
+        title={
+            'text': 'Portfolio Performance Over Time (DKK)',
+            'x': 0.5,
+            'font': {'size': 20, 'color': '#2c3e50'}
+        },
+        xaxis_title='Date',
+        yaxis_title='Portfolio Value (DKK)',
+        height=500,
+        paper_bgcolor='white',
+        plot_bgcolor='white',
+        font={'color': '#2c3e50'},
+        hovermode='x unified',
+        margin=dict(l=80, r=80, t=80, b=60),
+        xaxis=dict(
+            gridcolor='#f0f0f0',
+            tickfont=dict(size=12)
+        ),
+        yaxis=dict(
+            gridcolor='#f0f0f0',
+            tickfont=dict(size=12),
+            tickformat=',.0f'
+        )
+    )
+    
+    return fig
 
 def create_historical_performance_chart(portfolio_history, total_invested_dkk):
     """Create a chart showing portfolio performance over time in DKK"""
