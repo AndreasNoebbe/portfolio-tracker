@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from scipy.optimize import minimize
 import warnings
 import time
+import requests
 warnings.filterwarnings('ignore')
 
 # Page configuration
@@ -49,6 +50,19 @@ st.markdown("""
         border-left: 4px solid #1f4e79;
         margin: 1rem 0;
     }
+    
+    /* Fix chart container alignment */
+    .element-container {
+        width: 100% !important;
+    }
+    
+    /* Improve metrics display */
+    .metric-container {
+        display: flex;
+        justify-content: space-between;
+        gap: 1rem;
+        margin-bottom: 2rem;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -60,6 +74,38 @@ PORTFOLIO = {
     'NOVO-B.CO': {'shares': 430, 'avg_price': 477.49, 'currency': 'DKK', 'name': 'Novo Nordisk B'},
     'UNH': {'shares': 50, 'avg_price': 294.13, 'currency': 'USD', 'name': 'UnitedHealth Group'}
 }
+
+@st.cache_data(ttl=3600)  # Cache exchange rates for 1 hour
+def get_exchange_rates():
+    """Get current exchange rates to DKK"""
+    try:
+        # Using a free API for exchange rates
+        response = requests.get('https://api.exchangerate-api.com/v4/latest/DKK')
+        data = response.json()
+        
+        # Convert to rates TO DKK (inverse of FROM DKK)
+        rates = {
+            'USD_TO_DKK': 1 / data['rates']['USD'],
+            'SEK_TO_DKK': 1 / data['rates']['SEK'],
+            'DKK_TO_DKK': 1.0
+        }
+        return rates
+    except:
+        # Fallback rates if API fails
+        return {
+            'USD_TO_DKK': 6.85,  # Approximate USD to DKK
+            'SEK_TO_DKK': 0.63,  # Approximate SEK to DKK  
+            'DKK_TO_DKK': 1.0
+        }
+
+def convert_to_dkk(amount, from_currency, exchange_rates):
+    """Convert amount to DKK"""
+    if from_currency == 'USD':
+        return amount * exchange_rates['USD_TO_DKK']
+    elif from_currency == 'SEK':
+        return amount * exchange_rates['SEK_TO_DKK']
+    else:  # DKK
+        return amount
 
 @st.cache_data(ttl=600)  # Cache for 10 minutes to reduce API calls
 def get_current_prices():
@@ -160,8 +206,8 @@ def calculate_portfolio_summary(current_prices):
     
     return summary, total_invested, total_current, total_pnl, total_pnl_percent
 
-def calculate_portfolio_history(data):
-    """Calculate your portfolio value over time based on your actual positions"""
+def calculate_portfolio_history(data, exchange_rates):
+    """Calculate your portfolio value over time in DKK"""
     if data is None:
         return pd.DataFrame()
     
@@ -169,7 +215,7 @@ def calculate_portfolio_history(data):
     dates = data.index
     
     for date in dates:
-        daily_value = 0
+        daily_value_dkk = 0
         for ticker, position in PORTFOLIO.items():
             try:
                 if len(PORTFOLIO) == 1:
@@ -178,15 +224,85 @@ def calculate_portfolio_history(data):
                     price = data.loc[date, (ticker, 'Adj Close')]
                 
                 if not pd.isna(price):
-                    daily_value += position['shares'] * price
+                    # Convert to DKK
+                    price_dkk = convert_to_dkk(price, position['currency'], exchange_rates)
+                    daily_value_dkk += position['shares'] * price_dkk
                     
             except Exception:
                 continue
         
-        if daily_value > 0:
-            portfolio_values.append({'date': date, 'portfolio_value': daily_value})
+        if daily_value_dkk > 0:
+            portfolio_values.append({'date': date, 'portfolio_value_dkk': daily_value_dkk})
     
     return pd.DataFrame(portfolio_values)
+
+def create_historical_performance_chart(portfolio_history, total_invested_dkk):
+    """Create a chart showing portfolio performance over time in DKK"""
+    if portfolio_history.empty:
+        return go.Figure()
+    
+    fig = go.Figure()
+    
+    # Portfolio value line
+    fig.add_trace(go.Scatter(
+        x=portfolio_history['date'],
+        y=portfolio_history['portfolio_value_dkk'],
+        mode='lines',
+        name='Portfolio Value',
+        line=dict(color='#1f4e79', width=3),
+        fill='tonexty',
+        hovertemplate='Date: %{x}<br>Value: %{y:,.0f} DKK<extra></extra>'
+    ))
+    
+    # Invested amount line
+    fig.add_hline(
+        y=total_invested_dkk, 
+        line_dash="dash", 
+        line_color="#dc3545", 
+        line_width=2,
+        annotation_text=f"Total Invested: {total_invested_dkk:,.0f} DKK",
+        annotation_position="top right"
+    )
+    
+    # Fill area for gains/losses
+    is_profit = portfolio_history['portfolio_value_dkk'].iloc[-1] > total_invested_dkk
+    fill_color = 'rgba(40, 167, 69, 0.2)' if is_profit else 'rgba(220, 53, 69, 0.2)'
+    
+    fig.add_trace(go.Scatter(
+        x=portfolio_history['date'],
+        y=[total_invested_dkk] * len(portfolio_history),
+        mode='lines',
+        line=dict(color='rgba(0,0,0,0)'),
+        showlegend=False,
+        hoverinfo='skip'
+    ))
+    
+    fig.update_layout(
+        title={
+            'text': 'Portfolio Performance Over Time (DKK)',
+            'x': 0.5,
+            'font': {'size': 20, 'color': '#2c3e50'}
+        },
+        xaxis_title='Date',
+        yaxis_title='Portfolio Value (DKK)',
+        height=500,
+        paper_bgcolor='white',
+        plot_bgcolor='white',
+        font={'color': '#2c3e50'},
+        hovermode='x unified',
+        margin=dict(l=80, r=80, t=80, b=60),
+        xaxis=dict(
+            gridcolor='#f0f0f0',
+            tickfont=dict(size=12)
+        ),
+        yaxis=dict(
+            gridcolor='#f0f0f0',
+            tickfont=dict(size=12),
+            tickformat=',.0f'
+        )
+    )
+    
+    return fig
 
 def calculate_risk_metrics(data):
     """Calculate sophisticated risk metrics for portfolio analysis"""
@@ -427,16 +543,18 @@ def main():
         st.sidebar.info("🔵 Market is closed")
         st.sidebar.caption("Live data may be limited")
     
-    # Fetch data
-    with st.spinner("Fetching market data..."):
+    # Fetch data and exchange rates
+    with st.spinner("Fetching market data and exchange rates..."):
+        exchange_rates = get_exchange_rates()
+        
         if demo_mode:
             # Force demo data
             current_prices = {
-                'GOOGL': 175.50,
-                'EVO.ST': 680.00, 
-                'NVO': 65.25,
-                'NOVO-B.CO': 520.00,
-                'UNH': 515.75
+                'GOOGL': 175.50,    # USD
+                'EVO.ST': 680.00,   # SEK 
+                'NVO': 65.25,       # USD
+                'NOVO-B.CO': 520.00, # DKK
+                'UNH': 515.75       # USD
             }
             historical_data = None  # Will trigger limited functionality
         else:
@@ -460,6 +578,12 @@ def main():
     else:
         st.sidebar.warning("⚠️ Some tickers using fallback data")
     
+    # Show exchange rates
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("**Exchange Rates (to DKK):**")
+    st.sidebar.write(f"💵 USD: {exchange_rates['USD_TO_DKK']:.2f}")
+    st.sidebar.write(f"💰 SEK: {exchange_rates['SEK_TO_DKK']:.2f}")
+    
     # Show data quality info
     if demo_mode:
         st.info("🧪 **Demo Mode:** Using sample data for demonstration purposes")
@@ -469,134 +593,107 @@ def main():
         st.success(f"✅ **Live Data:** Successfully fetched data for {len(current_prices)} assets")
     
     # Calculate metrics
-    summary, total_invested, total_current, total_pnl, total_pnl_percent = calculate_portfolio_summary(current_prices)
-    portfolio_history = calculate_portfolio_history(historical_data)
+    summary, total_invested_dkk, total_current_dkk, total_pnl_dkk, total_pnl_percent = calculate_portfolio_summary(current_prices, exchange_rates)
+    portfolio_history = calculate_portfolio_history(historical_data, exchange_rates)
     risk_metrics, correlation_matrix = calculate_risk_metrics(historical_data)
     optimization_results, returns_df = portfolio_optimization_analysis(historical_data)
     
-    # Summary metrics
+    # Summary metrics with better formatting
     st.markdown('<div class="section-header"><h3>💰 Portfolio Overview</h3></div>', unsafe_allow_html=True)
     
-    col1, col2, col3, col4 = st.columns(4)
+    # Create metrics in a more organized layout
+    metric_cols = st.columns(4)
     
-    with col1:
+    with metric_cols[0]:
         st.metric(
-            label="Current Value",
-            value=f"${total_current:,.2f}",
-            delta=f"${total_pnl:+,.2f}"
+            label="💼 Current Value",
+            value=f"{total_current_dkk:,.0f} DKK",
+            delta=f"{total_pnl_dkk:+,.0f} DKK"
         )
     
-    with col2:
+    with metric_cols[1]:
         st.metric(
-            label="Total Invested",
-            value=f"${total_invested:,.2f}",
+            label="💳 Total Invested",
+            value=f"{total_invested_dkk:,.0f} DKK",
             delta=None
         )
     
-    with col3:
+    with metric_cols[2]:
         st.metric(
-            label="Total P&L",
-            value=f"${total_pnl:+,.2f}",
+            label="📈 Total P&L",
+            value=f"{total_pnl_dkk:+,.0f} DKK",
             delta=f"{total_pnl_percent:+.2f}%"
         )
     
-    with col4:
+    with metric_cols[3]:
         st.metric(
-            label="Total Return",
+            label="🎯 Total Return",
             value=f"{total_pnl_percent:+.2f}%",
             delta=None
         )
     
-    # Charts section
+    # Charts section with improved layout
     st.markdown('<div class="section-header"><h3>📈 Performance Analysis</h3></div>', unsafe_allow_html=True)
     
-    col1, col2 = st.columns([2, 1])
+    # Historical performance chart - full width
+    if not portfolio_history.empty:
+        st.plotly_chart(
+            create_historical_performance_chart(portfolio_history, total_invested_dkk), 
+            use_container_width=True
+        )
+    else:
+        st.info("📊 Historical performance chart unavailable - limited data access")
     
-    with col1:
-        # Historical performance chart
-        if not portfolio_history.empty:
-            total_invested_line = sum(pos['shares'] * pos['avg_price'] for pos in PORTFOLIO.values())
-            
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(
-                x=portfolio_history['date'],
-                y=portfolio_history['portfolio_value'],
-                mode='lines',
-                name='Portfolio Value',
-                line=dict(color='#1f4e79', width=3),
-                fill='tonexty'
-            ))
-            
-            fig.add_hline(y=total_invested_line, line_dash="dash", line_color="red", 
-                         annotation_text="Total Invested")
-            
-            fig.update_layout(
-                title="Portfolio Performance Over Time",
-                xaxis_title="Date",
-                yaxis_title="Portfolio Value ($)",
-                height=400,
-                hovermode='x unified'
-            )
-            
-            st.plotly_chart(fig, use_container_width=True)
+    # Two-column layout for pie chart and bar chart
+    chart_col1, chart_col2 = st.columns([1, 1], gap="large")
     
-    with col2:
+    with chart_col1:
         # Portfolio allocation pie chart
-        labels = [row['name'] for row in summary]
-        values = [row['current_value'] for row in summary]
-        
-        fig = go.Figure(data=[go.Pie(
-            labels=labels,
-            values=values,
-            hole=0.4,
-            textinfo='percent',
-            textposition='inside'
-        )])
-        
-        fig.update_layout(
-            title="Portfolio Allocation",
-            height=400
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
+        pie_chart = create_portfolio_pie_chart(summary)
+        st.plotly_chart(pie_chart, use_container_width=True)
     
-    # P&L Analysis
-    col1, col2 = st.columns(2)
-    
-    with col1:
+    with chart_col2:
         # P&L bar chart
-        tickers = [row['ticker'] for row in summary]
-        pnl_values = [row['pnl'] for row in summary]
-        colors = ['green' if pnl >= 0 else 'red' for pnl in pnl_values]
-        
-        fig = go.Figure(data=[go.Bar(
-            x=tickers,
-            y=pnl_values,
-            marker_color=colors,
-            text=[f"${pnl:+,.0f}" for pnl in pnl_values],
-            textposition='auto'
-        )])
-        
-        fig.update_layout(
-            title="Profit & Loss by Position",
-            xaxis_title="Holdings",
-            yaxis_title="P&L ($)",
-            height=400
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
+        bar_chart = create_pnl_bar_chart(summary)
+        st.plotly_chart(bar_chart, use_container_width=True)
     
-    with col2:
-        # Holdings table
-        df_summary = pd.DataFrame(summary)
-        df_display = df_summary[['name', 'shares', 'current_price', 'pnl', 'pnl_percent']].copy()
-        df_display.columns = ['Asset', 'Shares', 'Current Price', 'P&L ($)', 'P&L (%)']
-        df_display['Current Price'] = df_display['Current Price'].apply(lambda x: f"${x:.2f}")
-        df_display['P&L ($)'] = df_display['P&L ($)'].apply(lambda x: f"${x:+,.2f}")
-        df_display['P&L (%)'] = df_display['P&L (%)'].apply(lambda x: f"{x:+.2f}%")
-        
-        st.markdown("**Individual Position Details:**")
-        st.dataframe(df_display, use_container_width=True, hide_index=True)
+    # Holdings table with improved formatting
+    st.markdown('<div class="section-header"><h3>📋 Individual Position Details</h3></div>', unsafe_allow_html=True)
+    
+    # Create detailed holdings table
+    holdings_data = []
+    for row in summary:
+        holdings_data.append({
+            'Asset': row['name'],
+            'Ticker': row['ticker'],
+            'Shares': f"{row['shares']:,}",
+            'Avg Price': f"{row['avg_price_original']:.2f} {row['currency']}",
+            'Current Price': f"{row['current_price_original']:.2f} {row['currency']}",
+            'Invested (DKK)': f"{row['invested_dkk']:,.0f}",
+            'Current Value (DKK)': f"{row['current_value_dkk']:,.0f}",
+            'P&L (DKK)': f"{row['pnl_dkk']:+,.0f}",
+            'P&L (%)': f"{row['pnl_percent']:+.2f}%"
+        })
+    
+    df_holdings = pd.DataFrame(holdings_data)
+    
+    # Display with custom styling
+    st.dataframe(
+        df_holdings,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Asset": st.column_config.TextColumn("Company", width="medium"),
+            "Ticker": st.column_config.TextColumn("Ticker", width="small"),
+            "Shares": st.column_config.TextColumn("Shares", width="small"),
+            "Avg Price": st.column_config.TextColumn("Avg Price", width="medium"),
+            "Current Price": st.column_config.TextColumn("Current Price", width="medium"),
+            "Invested (DKK)": st.column_config.TextColumn("Invested", width="medium"),
+            "Current Value (DKK)": st.column_config.TextColumn("Current Value", width="medium"),
+            "P&L (DKK)": st.column_config.TextColumn("P&L", width="medium"),
+            "P&L (%)": st.column_config.TextColumn("Return %", width="small")
+        }
+    )
     
     # Risk Analytics
     st.markdown('<div class="section-header"><h3>⚠️ Risk Analytics</h3></div>', unsafe_allow_html=True)
@@ -630,15 +727,25 @@ def main():
                 zmin=-1, zmax=1,
                 text=np.round(correlation_matrix.values, 2),
                 texttemplate='%{text}',
-                textfont={'size': 12}
+                textfont={'size': 12},
+                hovertemplate='%{x} vs %{y}<br>Correlation: %{z:.2f}<extra></extra>'
             ))
             
             fig.update_layout(
-                title="Portfolio Correlation Matrix",
-                height=400
+                title={
+                    'text': 'Portfolio Correlation Matrix',
+                    'x': 0.5,
+                    'font': {'size': 18, 'color': '#2c3e50'}
+                },
+                height=500,
+                paper_bgcolor='white',
+                font={'color': '#2c3e50'},
+                margin=dict(l=80, r=80, t=80, b=60)
             )
             
             st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("📊 Risk analytics require historical data - enable live data mode for full analysis")
     
     # Portfolio Optimization
     st.markdown('<div class="section-header"><h3>🎯 Portfolio Optimization</h3></div>', unsafe_allow_html=True)
@@ -649,9 +756,9 @@ def main():
         asset_names = optimization_results['asset_names']
         
         if opt_data:
-            col1, col2 = st.columns([2, 1])
+            opt_col1, opt_col2 = st.columns([2, 1], gap="large")
             
-            with col1:
+            with opt_col1:
                 # Efficient frontier
                 if 'efficient_frontier' in optimization_results and not optimization_results['efficient_frontier'].empty:
                     efficient_frontier = optimization_results['efficient_frontier']
@@ -664,7 +771,8 @@ def main():
                         y=efficient_frontier['return'],
                         mode='lines',
                         name='Efficient Frontier',
-                        line=dict(color='#1f4e79', width=3)
+                        line=dict(color='#1f4e79', width=3),
+                        hovertemplate='Volatility: %{x:.2%}<br>Return: %{y:.2%}<extra></extra>'
                     ))
                     
                     # Current portfolio
@@ -673,11 +781,12 @@ def main():
                         y=[current_data['return']],
                         mode='markers',
                         name='Current Portfolio',
-                        marker=dict(color='red', size=15, symbol='diamond')
+                        marker=dict(color='#dc3545', size=15, symbol='diamond'),
+                        hovertemplate='Current Portfolio<br>Volatility: %{x:.2%}<br>Return: %{y:.2%}<br>Sharpe: ' + f"{current_data['sharpe']:.2f}" + '<extra></extra>'
                     ))
                     
                     # Optimal portfolios
-                    colors = ['green', 'orange']
+                    colors = ['#28a745', '#ff6b35']
                     names = ['Max Sharpe', 'Min Volatility']
                     
                     for i, (scenario, color, name) in enumerate(zip(['max_sharpe', 'min_vol'], colors, names)):
@@ -688,19 +797,31 @@ def main():
                                 y=[data['return']],
                                 mode='markers',
                                 name=name,
-                                marker=dict(color=color, size=12)
+                                marker=dict(color=color, size=12),
+                                hovertemplate=f'{name}<br>Volatility: %{{x:.2%}}<br>Return: %{{y:.2%}}<br>Sharpe: {data["sharpe"]:.2f}<extra></extra>'
                             ))
                     
                     fig.update_layout(
-                        title='Efficient Frontier & Portfolio Optimization',
+                        title={
+                            'text': 'Efficient Frontier & Portfolio Optimization',
+                            'x': 0.5,
+                            'font': {'size': 18, 'color': '#2c3e50'}
+                        },
                         xaxis_title='Volatility (Risk)',
                         yaxis_title='Expected Return',
-                        height=500
+                        height=500,
+                        paper_bgcolor='white',
+                        plot_bgcolor='white',
+                        font={'color': '#2c3e50'},
+                        hovermode='closest',
+                        margin=dict(l=60, r=60, t=80, b=60),
+                        xaxis=dict(tickformat='.1%', gridcolor='#f0f0f0'),
+                        yaxis=dict(tickformat='.1%', gridcolor='#f0f0f0')
                     )
                     
                     st.plotly_chart(fig, use_container_width=True)
             
-            with col2:
+            with opt_col2:
                 # Optimization comparison table
                 opt_comparison = []
                 
@@ -734,6 +855,10 @@ def main():
                 
                 st.markdown("**Portfolio Metrics Comparison:**")
                 st.dataframe(pd.DataFrame(summary_metrics), use_container_width=True, hide_index=True)
+        else:
+            st.info("📊 Portfolio optimization requires historical data - enable live data mode for full analysis")
+    else:
+        st.info("📊 Portfolio optimization requires historical data - enable live data mode for full analysis")
     
     # Footer
     st.markdown("---")
@@ -741,6 +866,7 @@ def main():
     <div style="text-align: center; padding: 1rem; color: #666;">
         <p>📈 Professional Portfolio Analytics & Risk Management Dashboard</p>
         <p><strong>Technologies:</strong> Python, Streamlit, Plotly, yfinance, Modern Portfolio Theory</p>
+        <p><em>All values converted to Danish Kroner (DKK) for consistency</em></p>
         <p><em>Note: Some international tickers (EVO.ST, NOVO-B.CO) may have limited data availability outside market hours</em></p>
     </div>
     """, unsafe_allow_html=True)
