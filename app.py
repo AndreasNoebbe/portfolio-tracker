@@ -556,8 +556,7 @@ def main():
     st.markdown("""
     <div class="main-header">
         <h1>📈 Portfolio Tracker</h1>
-        <p>Professional Investment Analytics & Risk Management</p>
-        <p style="font-size: 0.9em; opacity: 0.8;">Real-time tracking of personal holdings with institutional-grade analysis</p>
+        <p>Real-time tracking of personal holdings with institutional-grade analysis</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -727,9 +726,8 @@ def main():
     st.markdown("---")
     st.markdown("""
     <div style="text-align: center; padding: 1rem; color: #666;">
-        <p>📈 Professional Portfolio Analytics & Risk Management Dashboard</p>
         <p><strong>Technologies:</strong> Python, Streamlit, Plotly, yfinance, Modern Portfolio Theory</p>
-        <p><em>All values converted to Danish Kroner (DKK) for consistency</em></p>
+        <p><em>All values converted to Danish Kroner (DKK)</em></p>
     </div>
     """, unsafe_allow_html=True)
 
