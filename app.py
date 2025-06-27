@@ -556,7 +556,8 @@ def main():
     st.markdown("""
     <div class="main-header">
         <h1>📈 Portfolio Tracker</h1>
-        <p>Real-time tracking of personal holdings with institutional-grade analysis</p>
+        <p>Professional Investment Analytics & Risk Management</p>
+        <p style="font-size: 0.9em; opacity: 0.8;">Real-time tracking of personal holdings with institutional-grade analysis</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -722,12 +723,197 @@ def main():
         hide_index=True
     )
     
+    # Risk Analytics
+    st.markdown('<div class="section-header"><h3>⚠️ Risk Analytics</h3></div>', unsafe_allow_html=True)
+    
+    if risk_metrics:
+        # Risk metrics table
+        risk_data = []
+        total_weight = sum(metrics['portfolio_weight'] for metrics in risk_metrics.values())
+        
+        for ticker, metrics in risk_metrics.items():
+            weight_pct = (metrics['portfolio_weight'] / total_weight * 100) if total_weight > 0 else 0
+            risk_data.append({
+                'Asset': ticker,
+                'Weight (%)': f"{weight_pct:.1f}%",
+                'Volatility (%)': f"{metrics['volatility']:.2f}%",
+                'VaR 95%': f"{metrics['var_95']:.2f}%",
+                'Sharpe Ratio': f"{metrics['sharpe_ratio']:.2f}",
+                'Max Drawdown': f"{metrics['max_drawdown']:.2f}%"
+            })
+        
+        df_risk = pd.DataFrame(risk_data)
+        st.dataframe(df_risk, use_container_width=True, hide_index=True)
+        
+        # Correlation heatmap
+        if not correlation_matrix.empty:
+            fig = go.Figure(data=go.Heatmap(
+                z=correlation_matrix.values,
+                x=correlation_matrix.columns,
+                y=correlation_matrix.columns,
+                colorscale='RdYlBu_r',
+                zmin=-1, zmax=1,
+                text=np.round(correlation_matrix.values, 2),
+                texttemplate='%{text}',
+                textfont={'size': 12},
+                hovertemplate='%{x} vs %{y}<br>Correlation: %{z:.2f}<extra></extra>'
+            ))
+            
+            fig.update_layout(
+                title={
+                    'text': 'Portfolio Correlation Matrix',
+                    'x': 0.5,
+                    'font': {'size': 18, 'color': '#2c3e50'}
+                },
+                height=500,
+                paper_bgcolor='white',
+                font={'color': '#2c3e50'},
+                margin=dict(l=80, r=80, t=80, b=60)
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("📊 Risk analytics require historical data - try refreshing or enable demo mode for full analysis")
+    
+    # Portfolio Optimization
+    st.markdown('<div class="section-header"><h3>🎯 Portfolio Optimization</h3></div>', unsafe_allow_html=True)
+    
+    if optimization_results and 'optimizations' in optimization_results:
+        opt_data = optimization_results['optimizations']
+        current_data = optimization_results['current']
+        asset_names = optimization_results['asset_names']
+        
+        if opt_data:
+            opt_col1, opt_col2 = st.columns([2, 1], gap="large")
+            
+            with opt_col1:
+                # Efficient frontier
+                if 'efficient_frontier' in optimization_results and not optimization_results['efficient_frontier'].empty:
+                    efficient_frontier = optimization_results['efficient_frontier']
+                    
+                    fig = go.Figure()
+                    
+                    # Efficient frontier line
+                    fig.add_trace(go.Scatter(
+                        x=efficient_frontier['volatility'],
+                        y=efficient_frontier['return'],
+                        mode='lines',
+                        name='Efficient Frontier',
+                        line=dict(color='#1f4e79', width=3),
+                        hovertemplate='Volatility: %{x:.2%}<br>Return: %{y:.2%}<extra></extra>'
+                    ))
+                    
+                    # Current portfolio
+                    fig.add_trace(go.Scatter(
+                        x=[current_data['volatility']],
+                        y=[current_data['return']],
+                        mode='markers',
+                        name='Current Portfolio',
+                        marker=dict(color='#dc3545', size=15, symbol='diamond'),
+                        hovertemplate='Current Portfolio<br>Volatility: %{x:.2%}<br>Return: %{y:.2%}<br>Sharpe: ' + f"{current_data['sharpe']:.2f}" + '<extra></extra>'
+                    ))
+                    
+                    # Optimal portfolios
+                    colors = ['#28a745', '#ff6b35']
+                    names = ['Max Sharpe', 'Min Volatility']
+                    
+                    for i, (scenario, color, name) in enumerate(zip(['max_sharpe', 'min_vol'], colors, names)):
+                        if scenario in opt_data:
+                            data = opt_data[scenario]
+                            fig.add_trace(go.Scatter(
+                                x=[data['volatility']],
+                                y=[data['return']],
+                                mode='markers',
+                                name=name,
+                                marker=dict(color=color, size=12),
+                                hovertemplate=f'{name}<br>Volatility: %{{x:.2%}}<br>Return: %{{y:.2%}}<br>Sharpe: {data["sharpe"]:.2f}<extra></extra>'
+                            ))
+                    
+                    fig.update_layout(
+                        title={
+                            'text': 'Efficient Frontier & Portfolio Optimization',
+                            'x': 0.5,
+                            'font': {'size': 18, 'color': '#2c3e50'}
+                        },
+                        xaxis_title='Volatility (Risk)',
+                        yaxis_title='Expected Return',
+                        height=500,
+                        paper_bgcolor='white',
+                        plot_bgcolor='white',
+                        font={'color': '#2c3e50'},
+                        hovermode='closest',
+                        margin=dict(l=60, r=60, t=80, b=60),
+                        xaxis=dict(tickformat='.1%', gridcolor='#f0f0f0'),
+                        yaxis=dict(tickformat='.1%', gridcolor='#f0f0f0')
+                    )
+                    
+                    st.plotly_chart(fig, use_container_width=True)
+            
+            with opt_col2:
+                # Optimization comparison table
+                opt_comparison = []
+                
+                for i, asset in enumerate(asset_names):
+                    row = {'Asset': asset, 'Current': f"{current_data['weights'][i]:.1%}"}
+                    
+                    if 'max_sharpe' in opt_data:
+                        row['Max Sharpe'] = f"{opt_data['max_sharpe']['weights'][i]:.1%}"
+                    if 'min_vol' in opt_data:
+                        row['Min Vol'] = f"{opt_data['min_vol']['weights'][i]:.1%}"
+                    
+                    opt_comparison.append(row)
+                
+                # Summary metrics
+                summary_metrics = [
+                    {'Metric': 'Expected Return', 'Current': f"{current_data['return']:.2%}"},
+                    {'Metric': 'Volatility', 'Current': f"{current_data['volatility']:.2%}"},
+                    {'Metric': 'Sharpe Ratio', 'Current': f"{current_data['sharpe']:.2f}"}
+                ]
+                
+                if 'max_sharpe' in opt_data:
+                    for i, metric in enumerate(['return', 'volatility', 'sharpe']):
+                        summary_metrics[i]['Max Sharpe'] = f"{opt_data['max_sharpe'][metric]:.2%}" if metric != 'sharpe' else f"{opt_data['max_sharpe'][metric]:.2f}"
+                
+                if 'min_vol' in opt_data:
+                    for i, metric in enumerate(['return', 'volatility', 'sharpe']):
+                        summary_metrics[i]['Min Vol'] = f"{opt_data['min_vol'][metric]:.2%}" if metric != 'sharpe' else f"{opt_data['min_vol'][metric]:.2f}"
+                
+                st.markdown("**Asset Allocation Comparison:**")
+                st.dataframe(pd.DataFrame(opt_comparison), use_container_width=True, hide_index=True)
+                
+                st.markdown("**Portfolio Metrics Comparison:**")
+                st.dataframe(pd.DataFrame(summary_metrics), use_container_width=True, hide_index=True)
+                
+                # Add rebalancing recommendations
+                if 'max_sharpe' in opt_data:
+                    st.markdown("**💡 Rebalancing Suggestions (Max Sharpe):**")
+                    suggestions = []
+                    for i, asset in enumerate(asset_names):
+                        current_weight = current_data['weights'][i]
+                        optimal_weight = opt_data['max_sharpe']['weights'][i]
+                        difference = optimal_weight - current_weight
+                        
+                        if abs(difference) > 0.05:  # Only show significant changes > 5%
+                            action = "Increase" if difference > 0 else "Decrease"
+                            suggestions.append(f"• **{action} {asset}** by {abs(difference):.1%}")
+                    
+                    if suggestions:
+                        for suggestion in suggestions[:3]:  # Show top 3 suggestions
+                            st.write(suggestion)
+                    else:
+                        st.write("✅ Portfolio is well-optimized!")
+        else:
+            st.info("📊 Portfolio optimization requires historical data - try refreshing or enable demo mode for full analysis")
+    else:
+        st.info("📊 Portfolio optimization requires historical data - try refreshing or enable demo mode for full analysis")
+    
     # Footer
     st.markdown("---")
     st.markdown("""
     <div style="text-align: center; padding: 1rem; color: #666;">
+        <p>📈 Professional Portfolio Analytics & Risk Management Dashboard</p>
         <p><strong>Technologies:</strong> Python, Streamlit, Plotly, yfinance, Modern Portfolio Theory</p>
-        <p><em>All values converted to Danish Kroner (DKK)</em></p>
+        <p><em>All values converted to Danish Kroner (DKK) for consistency</em></p>
     </div>
     """, unsafe_allow_html=True)
 
